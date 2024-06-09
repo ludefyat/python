@@ -28,14 +28,20 @@ def csv_to_dict_list(csv_file):
 def list_files(directory):
     for root, dirs, files in os.walk(directory):
         for filename in files:
-            yield filename
+            if filename.endswith('.csv'):
+                yield filename
 
 def load_data(ticker, start_date, interval):
     end_date=start_date
     if interval == "1wk":
         end_date = start_date.replace(month=(start_date.month + 1)%12, day=1) 
-    si_df = si.get_data(ticker, start_date=start_date - timedelta(days=1), end_date=end_date, interval=interval)
-    si_df.dropna(inplace=True)
+    si_df = pd.DataFrame()
+    try:
+        si_df = si.get_data(ticker, start_date=start_date - timedelta(days=1), end_date=end_date, interval=interval)
+    except:
+        print(f"Failed in getting {interval} data, {start_date - timedelta(days=1)} ~ {end_date}")
+    else:
+        si_df.dropna(inplace=True)
     return si_df
 
 
