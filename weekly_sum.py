@@ -1,45 +1,24 @@
 import pandas as pd
 import os
-import csv
 import re
 from datetime import datetime, timedelta
-from openpyxl import load_workbook, Workbook
+from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
-from openpyxl.utils.dataframe import dataframe_to_rows
 from yahoo_fin import stock_info as si
 from parameters import *
-from load_data import end_date_si
-
-def csv_to_dict_list(csv_file):
-    data = []
-    with open(csv_file, 'r', newline='') as file:
-        reader = csv.reader(file)
-        keys = next(reader)
-        for row in reader:
-            d = {}
-            for i, key in enumerate(keys):
-                value = row[i].strip()
-                if value:
-                    d[key] = value
-            data.append(d)
-    return data
-
-
-def list_files(directory):
-    for root, dirs, files in os.walk(directory):
-        for filename in files:
-            if filename.endswith('.csv'):
-                yield filename
+import requests
 
 def load_data(ticker, start_date, interval):
-    end_date=start_date
-    if interval == "1wk":
-        end_date = start_date.replace(month=(start_date.month + 1)%12, day=1) 
+    #load data until 1st day of next month
+    end_date = datetime(start_date.year + (start_date.month // 12), (start_date.month + 1) % 12, 1)
     si_df = pd.DataFrame()
     try:
         si_df = si.get_data(ticker, start_date=start_date - timedelta(days=1), end_date=end_date, interval=interval)
-    except:
-        print(f"Failed in getting {interval} data, {start_date - timedelta(days=1)} ~ {end_date}")
+    except requests.exceptions.RequestException as e:
+        print(f"Network-related error occurred: {e}")
+        si_df = None
+    except Exception as e:
+        print(f"An error occurred: {e}\nFailed in getting {interval} data, {start_date - timedelta(days=1)} ~ {end_date}")
     else:
         si_df.dropna(inplace=True)
     return si_df
@@ -69,12 +48,14 @@ def setup_worksheet(worksheet, title):
         worksheet.column_dimensions[column[0].column_letter].width = adjusted_width
 
 
-def write_dict_to_excel(ws_dict, file_name):
+def write_df_dict_to_excel(ws_dict, file_name):
     wb = Workbook()
     for key, value in ws_dict.items():
-        #ws = wb.create_sheet(title=key)
+        df = value.reset_index()
+        list_value = [list(df.columns)]
+        list_value.extend(list(df.values))
         ws = wb.create_sheet()
-        for row_index, row_data in enumerate(value, start=1):
+        for row_index, row_data in enumerate(list_value, start=1):
             for col_index, col_data in enumerate(row_data, start=1):
                 ws.cell(row=row_index, column=col_index, value=col_data)
         setup_worksheet(ws, title=key)
@@ -82,6 +63,8 @@ def write_dict_to_excel(ws_dict, file_name):
     wb.save(file_name)
 
 
+if not DIRS_CFG['dash']:
+    raise ValueError(f"dash dir NOT configured")
 os.system('clear')
 directory = os.getcwd()
 pattern = r"\d{4}-\d{2}"
@@ -89,7 +72,7 @@ contents = [content for content in os.listdir(directory) if os.path.isdir(os.pat
 matched_directories = [content for content in contents if re.match(pattern, content)]
 if not matched_directories:
     print(f"Found no matched directory, quit...")
-    os.abort()
+    os._exit(1)
 sub_dir_list = sorted(matched_directories)
 print("matched dirs found:", sub_dir_list)
 
@@ -100,28 +83,38 @@ print(f"{stock_names}")
 
 dash_dict = {}  #dict to store dashboard work book
 chl_str = ''.join([word[0] for word in PREDICT_COLUMNS])
-for sub_dir in sub_dir_list:
-    for filename in list_files(sub_dir):
-        mainname = os.path.splitext(filename)[0]
-        fld_lst = mainname.split('_')
-        if len(fld_lst) < 4 or fld_lst[0] not in stock_names.keys() or stock_names[fld_lst[0]] != fld_lst[1] or fld_lst[3][-len(chl_str):] != chl_str:
-            print(f"{filename} ignored...")
-            continue
-        print(f"csv: {filename} is processing...")
-        stock = fld_lst[0]
-        start_date = datetime.strptime(sub_dir, "%Y-%m")
-        if start_date > datetime.now():
-            raise ValueError(f"start_date {sub_dir} INVALID")
+xls_dashboard = os.path.join(DIRS_CFG['dash'], f"dash{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-1]}.xlsx")
+if not os.path.exists(xls_dashboard) and len(sub_dir_list) > 1:
+    xls_dashboard = os.path.join(DIRS_CFG['dash'], f"dash{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-2]}.xlsx")
+    print(f"Latest sum file NOT found, but found previous {xls_dashboard}...")
+excel_data = pd.read_excel(xls_dashboard, sheet_name=None)
+for sheet_name, df in excel_data.items():
+    df.set_index(df.columns[0], inplace=True)
+    dash_dict[sheet_name] = df
+
+sub_list = sub_dir_list[-1:] if len(dash_dict) else sub_dir_list
+print(f"{sub_list} is processing...")
+
+for sub_dir in sub_list:
+    print(f"{sub_dir} is processing...")
+    start_date = datetime.strptime(sub_dir, "%Y-%m")
+    if start_date > datetime.now():
+        raise ValueError(f"start_date {sub_dir} INVALID")
+    for stock, ticker in stock_names.items():
+        filename = f"{stock}_{ticker}_{sub_dir}_{chl_str}.csv"
         csv_filename = os.path.join(sub_dir, filename)
+        if not os.path.exists(csv_filename):
+            continue
+        print(f"{sub_dir}: {filename} is processing...")
         df = pd.read_csv(csv_filename)
-        si_month = load_data(stock_names[stock], start_date, "1mo") #load 1 monthly data of start_date
-        si_week = load_data(stock_names[stock], start_date, "1wk") #load all weekly data in the month of start_date
-        print(f"si_month\n{si_month.tail(7)}\n si_week\n{si_week.tail(7)}")
+        si_month = load_data(ticker, start_date, "1mo") #load 1 monthly data of start_date
+        si_week = load_data(ticker, start_date, "1wk") #load all weekly data in the month of start_date
+        if si_month is None or si_week is None:
+            os._exit(100)
+        print(f"month data\n{si_month.tail(7)}\n week data\n{si_week.tail(7)}")
         if si_month.empty and si_week.empty:
             print(f"{stock} data EMPTY")
             continue
-        #input()
-        
         real_dict = {col + "_real": [] for col in PREDICT_COLUMNS}
         i = 0
         for column_name, column_data in df.items():
@@ -133,7 +126,9 @@ for sub_dir in sub_dir_list:
                     fld_str = re.findall(r'\((.*?)\)', date_str)[0]
                     interval = fld_str[1:]
                     if interval == 'month':
-                        mon_start = pd.Timestamp((datetime.strptime(start, "%Y-%m-%d") - timedelta(days=1)).date())
+                        mon_start = pd.Timestamp(datetime.strptime(start, "%Y-%m-%d"))
+                        if ticker[-3:] in [".SS",".SZ",".HK"]:  #adjust CST timezone to EDT
+                            mon_start -= timedelta(days=1)
                         row_latest = si_month.loc[mon_start] if mon_start in si_month.index else None
                     elif interval == 'week' and start in si_week.index:
                         row_latest = si_week.loc[start]
@@ -150,20 +145,15 @@ for sub_dir in sub_dir_list:
                     df.insert(i, fld_str, real_dict[fld_str])
                     i = i + 1
 
+        df.set_index(df.columns[0], inplace=True)
         if stock in dash_dict:
-            dash_dict[stock].extend(list(df.values))
-        else:
-            dash_dict[stock] = []
-            dash_dict[stock].append(list(df.columns))
-            dash_dict[stock].extend(list(df.values))
-        print(f"{filename} merged into dict......\n")
-    print(f"ALL files in {sub_dir} summarized into dict......\n")
-    #input()
+            df = dash_dict[stock].combine_first(df)
+        dash_dict[stock] = df
+        print(f"{sub_dir}: {filename} merged into dict......\n")
 
-if DIRS_CFG['dash']:
-    xls_dashboard = os.path.join(DIRS_CFG['dash'], f"dash{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-1]}.xlsx")
-    write_dict_to_excel(ws_dict=dash_dict, file_name=xls_dashboard)
-    print(f"{xls_dashboard} successfully produced!")
+xls_dashboard = os.path.join(DIRS_CFG['dash'], f"dash{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-1]}.xlsx")
+write_df_dict_to_excel(ws_dict=dash_dict, file_name=xls_dashboard)
+print(f"{xls_dashboard} successfully produced!")
 
 
     
