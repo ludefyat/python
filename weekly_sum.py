@@ -62,6 +62,15 @@ def write_df_dict_to_excel(ws_dict, file_name):
     wb.remove(wb.active)  # Remove the default sheet created by Workbook
     wb.save(file_name)
 
+def import_and_call(module_name, func_name):
+    try:
+        module = __import__(module_name)
+        func = getattr(module, func_name)
+        func()
+    except ModuleNotFoundError:
+        print(f"Module '{module_name}.py' does not exist, function not called.")
+    except AttributeError:
+        print(f"Function '{func_name}' not found in module '{module_name}'.")
 
 if not DIRS_CFG['dash']:
     raise ValueError(f"dash dir NOT configured")
@@ -83,14 +92,15 @@ print(f"{stock_names}")
 
 dash_dict = {}  #dict to store dashboard work book
 chl_str = ''.join([word[0] for word in PREDICT_COLUMNS])
-xls_dashboard = os.path.join(DIRS_CFG['dash'], f"dash{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-1]}.xlsx")
+xls_dashboard = os.path.join(DIRS_CFG['dash'], f"{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-1]}.xlsx")
 if not os.path.exists(xls_dashboard) and len(sub_dir_list) > 1:
-    xls_dashboard = os.path.join(DIRS_CFG['dash'], f"dash{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-2]}.xlsx")
-    print(f"Latest sum file NOT found, but found previous {xls_dashboard}...")
-excel_data = pd.read_excel(xls_dashboard, sheet_name=None)
-for sheet_name, df in excel_data.items():
-    df.set_index(df.columns[0], inplace=True)
-    dash_dict[sheet_name] = df
+    print(f"Latest sum file {xls_dashboard} NOT found, try to find previous file...")
+    xls_dashboard = os.path.join(DIRS_CFG['dash'], f"{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-2]}.xlsx")
+if os.path.exists(xls_dashboard):  
+    excel_data = pd.read_excel(xls_dashboard, sheet_name=None)
+    for sheet_name, df in excel_data.items():
+        df.set_index(df.columns[0], inplace=True)
+        dash_dict[sheet_name] = df
 
 sub_list = sub_dir_list[-1:] if len(dash_dict) else sub_dir_list
 print(f"{sub_list} is processing...")
@@ -146,15 +156,17 @@ for sub_dir in sub_list:
                     i = i + 1
 
         df.set_index(df.columns[0], inplace=True)
+        df.sort_index(inplace=True)
         if stock in dash_dict:
             df = dash_dict[stock].combine_first(df)
         dash_dict[stock] = df
         print(f"{sub_dir}: {filename} merged into dict......\n")
 
-xls_dashboard = os.path.join(DIRS_CFG['dash'], f"dash{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-1]}.xlsx")
+xls_dashboard = os.path.join(DIRS_CFG['dash'], f"{chl_str}_{sub_dir_list[0]}_{sub_dir_list[-1]}.xlsx")
 write_df_dict_to_excel(ws_dict=dash_dict, file_name=xls_dashboard)
 print(f"{xls_dashboard} successfully produced!")
-
+# try to import mystatics module to do more statics
+import_and_call('my_statics', 'my_statics')
 
     
 

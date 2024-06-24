@@ -60,10 +60,13 @@ def plot_multi_graph(test_df, predict_cols=['close','high','low'], future=[0,0,0
     width, height = 4*len(predict_cols), 3*len(predict_cols)
     fig, axs = plt.subplots(len(predict_cols), 1, sharex='col', sharey='col', figsize=(width, height))
 
+    x_label = pic_info[(pic_info.find(' (') + 3) : pic_info.find(')')] + 's'
+    x_label = x_label.capitalize()
+
     for i, predict_col in enumerate(predict_cols):
         axs[i].plot(test_df[f'true_{predict_col}_{LOOKUP_STEP}'], c='b')
         axs[i].plot(test_df[f'{predict_col}_{LOOKUP_STEP}'], c='r')
-        axs[i].set_xlabel("Days")
+        axs[i].set_xlabel(x_label)
         axs[i].set_ylabel("Price")
         axs[i].set_title(f"{predict_col}: {future[i]:.2f}",loc = 'center')
         axs[i].text(0.985, 0.985, predit_info[f"metrics_{predict_col}"], fontsize=9, ha='right', va='top', transform=axs[i].transAxes, bbox=dict(facecolor='white', alpha=0.5))
@@ -154,113 +157,112 @@ for key, dir in DIRS_CFG.items():
     if len(dir) and not os.path.isdir(dir):
         os.mkdir(dir)
 
-# 防止计算机进入休眠状态
+#prevent going sleep
 caffeinate_process = subprocess.Popen(["caffeinate"])
 os.system('clear')
 fixed_para = f"{shuffle_str}-{scale_str}-{split_by_date_str}-{LOSS}-{OPTIMIZER}-{CELL.__name__}-seq-{LOOKUP_STEP}"
 fixed_para += "-b" if BIDIRECTIONAL else ""
 print(f"{fixed_para}")
 
-#csv_predit_filename = None 
-for row_cfg, ticker_cfg in enumerate(TICKER_CFG):
-    ticker      = ticker_cfg['ticker']
-    interval    = ticker_cfg['interval']
-    predit_ticker = {}
-    model_name = f"{ticker}_{ticker_cfg['n_steps']}-{ticker_cfg['n_layers']}-{ticker_cfg['units']}"
-    #model_name = f"{ticker}-{shuffle_str}-{scale_str}-{split_by_date_str}-{LOSS}-{OPTIMIZER}-{CELL.__name__}-seq-{ticker_cfg['n_steps']}-step-{LOOKUP_STEP}-layers-{ticker_cfg['n_layers']}-units-{ticker_cfg['units']}"
-    
-    print(f"{model_name}\n{time.strftime('%Y-%m-%d %H:%M')}\n{ticker}\n{ticker_cfg['name']}...date_now: {date_now}...{interval_dict[interval]}")
-    #input()
+for week_dlt in range(0, WEEK_BACKTRACK + 1):
+    date_now = datetime.now().date() if week_dlt == 0 else date_now - timedelta(days=7)
+    print(f"current date: {date_now}")
+    str_date_now = date_now.strftime("%Y-%m-%d")
+    for row_cfg, ticker_cfg in enumerate(TICKER_CFG):
+        ticker      = ticker_cfg['ticker']
+        interval    = ticker_cfg['interval']
+        predit_ticker = {}
+        model_name = f"{ticker}_{ticker_cfg['n_steps']}-{ticker_cfg['n_layers']}-{ticker_cfg['units']}"
+        print(f"{model_name}\n{time.strftime('%Y-%m-%d %H:%M')}\n{ticker}\n{ticker_cfg['name']}...str_date_now: {str_date_now}...{interval_dict[interval]}")
 
-    data = load_multioutput_data(ticker, date_now, interval_dict[interval], ticker_cfg['n_steps'], scale=SCALE, split_by_date=SPLIT_BY_DATE, 
-                    shuffle=SHUFFLE, lookup_step=LOOKUP_STEP, test_size=TEST_SIZE, 
-                    list_columns=FEATURE_COLUMNS, predict_cols=PREDICT_COLUMNS)
-    date_next = next_period_str(data['df'].index[-1], interval_dict[interval])
-    print(f"stock {ticker}, latest in db {data['df'].index[-1]}, interval {interval}, next {date_next}, train data, evaluate model, predict: {PREDICT_COLUMNS}.....")
-    param_info = (f"{date_next}\ndrop: {ticker_cfg['dropout']}\nstep: {ticker_cfg['n_steps']}\nlook: {LOOKUP_STEP}\nlayers: {ticker_cfg['n_layers']}\n" + 
-                    f"units: {ticker_cfg['units']}\nbat: {ticker_cfg['batch_size']}\nepo: {ticker_cfg['epochs']}")
-    predit_ticker["parameter"] = param_info
-    mon_future_label = date_now[:-3]
-    if not os.path.isdir(mon_future_label):
-        os.mkdir(mon_future_label)
+        data = load_multioutput_data(ticker, str_date_now, interval_dict[interval], ticker_cfg['n_steps'], scale=SCALE, split_by_date=SPLIT_BY_DATE, 
+                        shuffle=SHUFFLE, lookup_step=LOOKUP_STEP, test_size=TEST_SIZE, 
+                        list_columns=FEATURE_COLUMNS, predict_cols=PREDICT_COLUMNS)
+        date_next = next_period_str(data['df'].index[-1], interval_dict[interval])
+        print(f"stock {ticker}, latest in db {data['df'].index[-1]}, interval {interval}, next {date_next}, train data, evaluate model, predict: {PREDICT_COLUMNS}.....")
+        param_info = (f"{date_next}\ndrop: {ticker_cfg['dropout']}\nstep: {ticker_cfg['n_steps']}\nlook: {LOOKUP_STEP}\nlayers: {ticker_cfg['n_layers']}\n" + 
+                        f"units: {ticker_cfg['units']}\nbat: {ticker_cfg['batch_size']}\nepo: {ticker_cfg['epochs']}")
+        predit_ticker["parameter"] = param_info
+        mon_future_label = str_date_now[:-3]
+        if not os.path.isdir(mon_future_label):
+            os.mkdir(mon_future_label)
 
-    #input()
-    chl_str = ''.join([word[0] for word in PREDICT_COLUMNS])
-    #filename = os.path.join(mon_future_label, f"{ticker_cfg['name']}_predit_{mon_future_label}_{chl_str}")
-    filename = os.path.join(mon_future_label, f"{ticker_cfg['name']}_{ticker}_{mon_future_label}_{chl_str}")
-    csv_stock_filename = f"{filename}.csv"
-    #check if the record is alreadly exists in result file
-    if find_update_row(csv_stock_filename, "parameter", new_row = predit_ticker):
-        print(f"parameter found in {csv_stock_filename}, ignore the {interval} predict\n{predit_ticker['parameter']} ")
-        continue
-    
-    # save the dataframe
-    if DIRS_CFG['data']:
-        ticker_data_filename = os.path.join(DIRS_CFG['data'], f"{ticker}_{date_now}.csv")
-        data["df"].to_csv(ticker_data_filename) #save to dir of data
+        chl_str = ''.join([word[0] for word in PREDICT_COLUMNS])
+        #filename = os.path.join(mon_future_label, f"{ticker_cfg['name']}_predit_{mon_future_label}_{chl_str}")
+        filename = os.path.join(mon_future_label, f"{ticker_cfg['name']}_{ticker}_{mon_future_label}_{chl_str}")
+        csv_stock_filename = f"{filename}.csv"
+        #check if the record is alreadly exists in result file
+        if find_update_row(csv_stock_filename, "parameter", new_row = predit_ticker):
+            print(f"parameter found in {csv_stock_filename}, ignore the {interval} predict\n{predit_ticker['parameter']} ")
+            continue
+        
+        # save the dataframe
+        if DIRS_CFG['data']:
+            ticker_data_filename = os.path.join(DIRS_CFG['data'], f"{ticker}_{str_date_now}.csv")
+            data["df"].to_csv(ticker_data_filename) #save to dir of data
 
-    # create the model
-    model = create_multioutput_model(ticker_cfg['n_steps'], len(FEATURE_COLUMNS), loss=LOSS, units=ticker_cfg['units'], cell=CELL, n_layers=ticker_cfg['n_layers'],
-                        dropout=ticker_cfg['dropout'], optimizer=OPTIMIZER, bidirectional=BIDIRECTIONAL, predict_cols=PREDICT_COLUMNS)
+        # create the model
+        model = create_multioutput_model(ticker_cfg['n_steps'], len(FEATURE_COLUMNS), loss=LOSS, units=ticker_cfg['units'], cell=CELL, n_layers=ticker_cfg['n_layers'],
+                            dropout=ticker_cfg['dropout'], optimizer=OPTIMIZER, bidirectional=BIDIRECTIONAL, predict_cols=PREDICT_COLUMNS)
 
-    # define callbacks
-    epoch_callback = CustomEpochCallback(f"{row_cfg} of {len(TICKER_CFG)} {ticker_cfg['name']} {interval}")
-    early_stopping_err  = EarlyStopping(monitor='val_mean_absolute_error', patience=10, verbose=1)
-    my_callbacks = [epoch_callback, early_stopping_err]
-    if DIRS_CFG["checkpoint"]:
-        file_chkpnt = os.path.join(DIRS_CFG["checkpoint"], fixed_para, model_name + ".h5")
-        checkpointer = ModelCheckpoint(file_chkpnt, save_weights_only=True, save_best_only=True, verbose=1)
-        my_callbacks.append(checkpointer)
-    if DIRS_CFG["log"]:
-        tensorboard = TensorBoard(log_dir=os.path.join(DIRS_CFG["log"], model_name))
-        my_callbacks.append(tensorboard)
+        # define callbacks
+        epoch_callback = CustomEpochCallback(f"{ticker_cfg['name']} {row_cfg + 1}/{len(TICKER_CFG)} {date_now} {interval} {week_dlt + 1}/{WEEK_BACKTRACK + 1}")
+        early_stopping_err  = EarlyStopping(monitor='val_mean_absolute_error', patience=10, verbose=1)
+        my_callbacks = [epoch_callback, early_stopping_err]
+        if DIRS_CFG["checkpoint"]:
+            file_chkpnt = os.path.join(DIRS_CFG["checkpoint"], fixed_para, model_name + ".h5")
+            checkpointer = ModelCheckpoint(file_chkpnt, save_weights_only=True, save_best_only=True, verbose=1)
+            my_callbacks.append(checkpointer)
+        if DIRS_CFG["log"]:
+            tensorboard = TensorBoard(log_dir=os.path.join(DIRS_CFG["log"], model_name))
+            my_callbacks.append(tensorboard)
 
-    # train the model and save the weights whenever we see 
-    history = model.fit(data["X_train"], [data[f"y_train_{i}"] for i in range(len(PREDICT_COLUMNS))],
-                        batch_size=ticker_cfg['batch_size'],
-                        epochs=ticker_cfg['epochs'],
-                        validation_data=(data["X_test"], [data[f"y_test_{i}"] for i in range(len(PREDICT_COLUMNS))]),
-                        callbacks=my_callbacks,
-                        verbose=1)
+        # train the model and save the weights whenever we see 
+        history = model.fit(data["X_train"], [data[f"y_train_{i}"] for i in range(len(PREDICT_COLUMNS))],
+                            batch_size=ticker_cfg['batch_size'],
+                            epochs=ticker_cfg['epochs'],
+                            validation_data=(data["X_test"], [data[f"y_test_{i}"] for i in range(len(PREDICT_COLUMNS))]),
+                            callbacks=my_callbacks,
+                            verbose=1)
 
-    # evaluate the model
-    loss, mae = model.evaluate(data["X_test"], [data[f"y_test_{i}"] for i in range(len(PREDICT_COLUMNS))], verbose=0)
-    if early_stopping_err.stopped_epoch is not None:
-        predit_ticker["parameter"] += f"\nstop_epo: {early_stopping_err.stopped_epoch}"
+        # evaluate the model
+        loss, mae = model.evaluate(data["X_test"], [data[f"y_test_{i}"] for i in range(len(PREDICT_COLUMNS))], verbose=0)
+        if early_stopping_err.stopped_epoch is not None:
+            predit_ticker["parameter"] += f"\nstop_epo: {early_stopping_err.stopped_epoch}"
 
-    final_df = get_final_df(model, data, predict_cols=PREDICT_COLUMNS)
-    future_price = predict(model, data, predict_cols=PREDICT_COLUMNS)
+        final_df = get_final_df(model, data, predict_cols=PREDICT_COLUMNS)
+        future_price = predict(model, data, predict_cols=PREDICT_COLUMNS)
 
-    # calculate the mean absolute error (inverse scaling)
-    for i, predict_col in enumerate(PREDICT_COLUMNS):
-        predit_ticker[predict_col] = round(future_price[i], 2)
-        print(f"{ticker} {ticker_cfg['name']} predit in {date_next} {predict_col}: ", predit_ticker[predict_col])
-        if SCALE:
-            mae = data["column_scaler"][predict_col].inverse_transform([[mae]])[0][0]
-        print(f"{ticker} {predict_col}, Mean Absolute Error:, {mae:.2f}")  
+        # calculate the mean absolute error (inverse scaling)
+        for i, predict_col in enumerate(PREDICT_COLUMNS):
+            predit_ticker[predict_col] = round(future_price[i], 2)
+            print(f"{ticker} {ticker_cfg['name']} predit in {date_next} {predict_col}: ", predit_ticker[predict_col])
+            if SCALE:
+                mae = data["column_scaler"][predict_col].inverse_transform([[mae]])[0][0]
+            print(f"{ticker} {predict_col}, Mean Absolute Error:, {mae:.2f}")  
 
-        # we calculate the accuracy by counting the number of positive profits
-        accuracy_score = (len(final_df[final_df[f"sell_profit_{predict_col}"] > 0]) + \
-                          len(final_df[final_df[f"buy_profit_{predict_col}"] > 0])) / len(final_df)
-        total_buy_profit  = final_df[f"buy_profit_{predict_col}"].sum()
-        total_sell_profit = final_df[f"sell_profit_{predict_col}"].sum()
-        total_profit = total_buy_profit + total_sell_profit
-        profit_per_trade = total_profit / len(final_df) # dividing total profit by number of testing samples (number of trades)
-        predit_ticker[f'metrics_{predict_col}'] = \
-            f"Accuracy: {accuracy_score:.3f}\nBuy profit: {total_buy_profit:.3f}\n" + \
-            f"Sell profit: {total_sell_profit:.3f}\nProfit: {total_profit:.3f}\n" + \
-            f"Profit 1trade: {profit_per_trade:.3f}" 
+            # we calculate the accuracy by counting the number of positive profits
+            accuracy_score = (len(final_df[final_df[f"sell_profit_{predict_col}"] > 0]) + \
+                            len(final_df[final_df[f"buy_profit_{predict_col}"] > 0])) / len(final_df)
+            total_buy_profit  = final_df[f"buy_profit_{predict_col}"].sum()
+            total_sell_profit = final_df[f"sell_profit_{predict_col}"].sum()
+            total_profit = total_buy_profit + total_sell_profit
+            profit_per_trade = total_profit / len(final_df) # dividing total profit by number of testing samples (number of trades)
+            predit_ticker[f'metrics_{predict_col}'] = \
+                f"Accuracy: {accuracy_score:.3f}\nBuy profit: {total_buy_profit:.3f}\n" + \
+                f"Sell profit: {total_sell_profit:.3f}\nProfit: {total_profit:.3f}\n" + \
+                f"Profit 1trade: {profit_per_trade:.3f}" 
 
-    graph_info = f"{ticker_cfg['name']}~" + param_info
-    plt = plot_multi_graph(final_df, predict_cols=PREDICT_COLUMNS, future=future_price, pic_info=graph_info, predit_info=predit_ticker)
-    plt.savefig(f"{filename}.png")
-    plt.pause(3)
-    plt.close()
-    
-    #save file per stock
-    find_update_row(csv_stock_filename, "parameter", predit_ticker)
-    print(f"{row_cfg} of {len(TICKER_CFG)} finished......")
+        graph_info = f"{ticker_cfg['name']}~" + param_info
+        plt = plot_multi_graph(final_df, predict_cols=PREDICT_COLUMNS, future=future_price, pic_info=graph_info, predit_info=predit_ticker)
+        plt.savefig(f"{filename}.png")
+        plt.pause(3)
+        plt.close()
+        
+        #save file per stock
+        find_update_row(csv_stock_filename, "parameter", predit_ticker)
+        print(f"{row_cfg + 1} of {len(TICKER_CFG)} {str_date_now} finished......")
 
-# 当模型训练完成后，终止防止计算机进入休眠状态的进程
-caffeinate_process.terminate()       
+print(f"all train finished......")
+caffeinate_process.terminate()
 

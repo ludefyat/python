@@ -18,3 +18,4 @@ dashboard/
 data/
 logs/
 results/
+my_statics.py
